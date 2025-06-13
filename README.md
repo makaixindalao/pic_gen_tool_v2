@@ -65,6 +65,12 @@
 - **提示词构建器** (`services/ai_generation/prompt_builder.py`): 自动构建和优化Prompt
 - **AI生成任务** (`tasks/ai_generation/sd_generation_task.py`): Celery异步任务处理
 
+### YOLO检测服务
+- **YOLO检测器** (`services/yolo/yolo_detector.py`): YOLO模型目标检测和边界框生成
+- **标注生成器** (`services/yolo/annotation_generator.py`): 在图片上绘制边界框和标签
+- **格式转换器** (`services/yolo/format_converter.py`): YOLO格式与COCO格式互转
+- **YOLO检测任务** (`tasks/yolo/detection_task.py`): Celery异步检测任务处理
+
 ### 通用服务
 - **标注生成器** (`services/common/annotation_generator.py`): 生成COCO格式标注文件
 - **文件管理器** (`services/common/file_manager.py`): 数据集文件组织和存储
@@ -75,9 +81,10 @@
 - Python 3.8+
 - PyQt6（前端GUI）
 - PyTorch + Diffusers（AI生成）
+- Ultralytics YOLO（目标检测）
 - FastAPI（后端API）
 - 8GB+ 内存（推荐16GB）
-- NVIDIA GPU（可选，用于AI生成加速）
+- NVIDIA GPU（推荐，用于AI生成和YOLO检测加速）
 
 ### 安装步骤
 
@@ -158,7 +165,17 @@ python scripts/start_frontend.py
 3. 选择场景环境（城市/岛屿/乡村）
 4. 点击"生成提示词"自动构建提示词
 5. 调整生成参数（采样步数、CFG Scale等）
-6. 点击"生成图像"开始AI生成
+6. **启用YOLO检测**：勾选YOLO智能检测选项
+7. 点击"生成图像"开始AI生成
+8. **自动检测标注**：生成完成后自动进行YOLO目标检测和边界框标注
+
+#### YOLO智能检测功能
+1. **自动检测**：AI图片生成完成后自动调用YOLO模型
+2. **精确标注**：生成比传统方法更精确的边界框坐标
+3. **双图保存**：同时保存原始图片和标注后的图片
+4. **多格式输出**：生成COCO和YOLO两种格式的标注文件
+5. **参数配置**：可调整置信度阈值、NMS阈值等检测参数
+6. **结果预览**：支持查看检测结果和标注效果
 
 #### 传统生成功能
 1. 选择军事目标类型

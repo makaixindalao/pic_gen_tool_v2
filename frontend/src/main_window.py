@@ -479,6 +479,29 @@ class MainWindow(QMainWindow):
         ])
         config_layout.addRow("采样器:", self.sampler_combo)
 
+        # YOLO检测选项
+        yolo_layout = QHBoxLayout()
+        self.enable_yolo_cb = QCheckBox("启用YOLO智能检测")
+        self.enable_yolo_cb.setToolTip("生成图片后自动进行目标检测和边界框标注")
+        self.enable_yolo_cb.setChecked(True)  # 默认启用
+        
+        # YOLO配置按钮
+        self.yolo_config_btn = QPushButton("检测配置")
+        self.yolo_config_btn.setMaximumWidth(80)
+        self.yolo_config_btn.clicked.connect(self._show_yolo_config)
+        self.yolo_config_btn.setEnabled(True)
+        
+        yolo_layout.addWidget(self.enable_yolo_cb)
+        yolo_layout.addWidget(self.yolo_config_btn)
+        yolo_layout.addStretch()
+        config_layout.addRow("智能检测:", yolo_layout)
+        
+        # YOLO检测参数（默认值）
+        self.yolo_confidence = 0.5
+        self.yolo_nms_threshold = 0.4
+        self.yolo_save_annotated = True
+        self.yolo_save_original = True
+
         # 批量生成选项
         batch_options_group = QGroupBox("批量生成选项")
         batch_options_layout = QVBoxLayout(batch_options_group)
@@ -548,6 +571,83 @@ class MainWindow(QMainWindow):
             self.ai_generate_btn.setText("批量生成图像")
         else:
             self.ai_generate_btn.setText("生成图像")
+
+    def _show_yolo_config(self):
+        """显示YOLO配置对话框"""
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QDoubleSpinBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("YOLO检测配置")
+        dialog.setModal(True)
+        dialog.resize(350, 250)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # 配置组
+        config_group = QGroupBox("检测参数")
+        config_layout = QFormLayout(config_group)
+        
+        # 置信度阈值
+        confidence_spin = QDoubleSpinBox()
+        confidence_spin.setRange(0.1, 1.0)
+        confidence_spin.setSingleStep(0.05)
+        confidence_spin.setValue(self.yolo_confidence)
+        confidence_spin.setToolTip("检测置信度阈值，越高越严格")
+        config_layout.addRow("置信度阈值:", confidence_spin)
+        
+        # NMS阈值
+        nms_spin = QDoubleSpinBox()
+        nms_spin.setRange(0.1, 1.0)
+        nms_spin.setSingleStep(0.05)
+        nms_spin.setValue(self.yolo_nms_threshold)
+        nms_spin.setToolTip("非极大值抑制阈值，用于去除重叠检测框")
+        config_layout.addRow("NMS阈值:", nms_spin)
+        
+        # 保存选项组
+        save_group = QGroupBox("保存选项")
+        save_layout = QVBoxLayout(save_group)
+        
+        save_original_cb = QCheckBox("保存原始图片")
+        save_original_cb.setChecked(self.yolo_save_original)
+        save_original_cb.setToolTip("保存YOLO检测前的原始图片")
+        
+        save_annotated_cb = QCheckBox("保存标注图片")
+        save_annotated_cb.setChecked(self.yolo_save_annotated)
+        save_annotated_cb.setToolTip("保存绘制了边界框的标注图片")
+        
+        save_layout.addWidget(save_original_cb)
+        save_layout.addWidget(save_annotated_cb)
+        
+        # 按钮
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        
+        layout.addWidget(config_group)
+        layout.addWidget(save_group)
+        layout.addStretch()
+        layout.addWidget(button_box)
+        
+        # 显示对话框
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # 保存配置
+            self.yolo_confidence = confidence_spin.value()
+            self.yolo_nms_threshold = nms_spin.value()
+            self.yolo_save_original = save_original_cb.isChecked()
+            self.yolo_save_annotated = save_annotated_cb.isChecked()
+            
+            # 显示配置更新消息
+            QMessageBox.information(
+                self, 
+                "配置已更新", 
+                f"YOLO检测配置已更新：\n"
+                f"置信度阈值: {self.yolo_confidence}\n"
+                f"NMS阈值: {self.yolo_nms_threshold}\n"
+                f"保存原始图片: {'是' if self.yolo_save_original else '否'}\n"
+                f"保存标注图片: {'是' if self.yolo_save_annotated else '否'}"
+            )
 
     def _get_selected_option(self, radio_buttons):
         """获取选中的单选按钮文本"""
@@ -669,7 +769,13 @@ class MainWindow(QMainWindow):
             'height': 512,
             'scheduler_name': self.sampler_combo.currentText(),
             'save_images': True,
-            'generate_annotations': True
+            'generate_annotations': True,
+            # YOLO检测参数
+            'enable_yolo_detection': self.enable_yolo_cb.isChecked(),
+            'yolo_confidence': self.yolo_confidence,
+            'yolo_nms_threshold': self.yolo_nms_threshold,
+            'yolo_save_original': self.yolo_save_original,
+            'yolo_save_annotated': self.yolo_save_annotated
         }
         
         # 禁用生成按钮
@@ -741,7 +847,13 @@ class MainWindow(QMainWindow):
                 'height': 512,
                 'scheduler_name': self.sampler_combo.currentText(),
                 'save_images': True,
-                'generate_annotations': True
+                'generate_annotations': True,
+                # YOLO检测参数
+                'enable_yolo_detection': self.enable_yolo_cb.isChecked(),
+                'yolo_confidence': self.yolo_confidence,
+                'yolo_nms_threshold': self.yolo_nms_threshold,
+                'yolo_save_original': self.yolo_save_original,
+                'yolo_save_annotated': self.yolo_save_annotated
             }
             batch_configs.append(config)
         
@@ -828,6 +940,13 @@ class MainWindow(QMainWindow):
 
     def _on_generation_progress(self, message):
         """生成进度更新"""
+        # 如果启用了YOLO检测，在进度消息中体现
+        if hasattr(self, 'enable_yolo_cb') and self.enable_yolo_cb.isChecked():
+            if "生成中" in message:
+                message += " (将进行YOLO检测)"
+            elif "生成完成" in message and "检测" not in message:
+                message += " - 正在进行YOLO检测..."
+        
         self.status_label.setText(message)
 
     def _on_generation_finished(self, result):
@@ -838,9 +957,17 @@ class MainWindow(QMainWindow):
         
         generation_id = result.get('generation_id', '')
         images = result.get('images', [])
+        yolo_enabled = result.get('yolo_detection_enabled', False)
+        yolo_results = result.get('yolo_results', {})
         
         if images:
-            self.status_label.setText(f"生成完成！生成ID: {generation_id}")
+            # 构建状态消息
+            status_msg = f"生成完成！生成ID: {generation_id}"
+            if yolo_enabled:
+                detected_count = yolo_results.get('total_detections', 0)
+                status_msg += f" | YOLO检测: {detected_count}个目标"
+            
+            self.status_label.setText(status_msg)
             self.progress_label.setText(f"进度: {len(images)}/{len(images)}")
             
             # 更新图片列表
@@ -848,7 +975,21 @@ class MainWindow(QMainWindow):
             self.current_image_index = 0
             self._update_image_display()
             
-            QMessageBox.information(self, "成功", f"成功生成 {len(images)} 张图像！")
+            # 构建成功消息
+            success_msg = f"成功生成 {len(images)} 张图像！"
+            if yolo_enabled:
+                success_msg += f"\n\nYOLO检测结果："
+                success_msg += f"\n• 检测到 {yolo_results.get('total_detections', 0)} 个目标"
+                if yolo_results.get('detection_summary'):
+                    for target_type, count in yolo_results['detection_summary'].items():
+                        success_msg += f"\n• {target_type}: {count}个"
+                
+                if yolo_results.get('annotated_images_saved'):
+                    success_msg += f"\n• 已保存标注图片"
+                if yolo_results.get('original_images_saved'):
+                    success_msg += f"\n• 已保存原始图片"
+            
+            QMessageBox.information(self, "成功", success_msg)
         else:
             self.status_label.setText("生成完成，但未获得图像")
 

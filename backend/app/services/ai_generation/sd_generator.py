@@ -74,31 +74,92 @@ class SDGenerator:
             bool: 加载是否成功
         """
         try:
+            import torch
             logger.info("开始加载Stable Diffusion模型...")
             
             # 根据设备选择数据类型
             torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
             
-            self.pipe = StableDiffusionPipeline.from_pretrained(
-                self.model_path,
-                torch_dtype=torch_dtype,
-                safety_checker=None,  # 禁用安全检查器以提高速度
-                requires_safety_checker=False
-            )
+            # 检查是否为本地路径
+            local_model_path = Path(self.model_path)
+            if local_model_path.exists() and local_model_path.is_dir():
+                logger.info(f"从本地路径加载模型: {self.model_path}")
+                model_source = str(local_model_path.resolve())  # 使用绝对路径
+                use_local_files_only = True
+            else:
+                # 检查相对路径
+                relative_path = Path("models/stable-diffusion-v1-5")
+                if relative_path.exists() and relative_path.is_dir():
+                    logger.info(f"从本地相对路径加载模型: {relative_path}")
+                    model_source = str(relative_path.resolve())
+                    use_local_files_only = True
+                else:
+                    logger.info(f"从Hugging Face Hub加载模型: {self.model_path}")
+                    model_source = self.model_path
+                    use_local_files_only = False
+            
+            # 尝试加载模型
+            try:
+                self.pipe = StableDiffusionPipeline.from_pretrained(
+                    model_source,
+                    torch_dtype=torch_dtype,
+                    safety_checker=None,  # 禁用安全检查器以提高速度
+                    requires_safety_checker=False,
+                    local_files_only=use_local_files_only  # 如果是本地路径，只使用本地文件
+                )
+            except Exception as e:
+                if "Connection error" in str(e) or "Max retries exceeded" in str(e):
+                    logger.warning("网络连接失败，尝试使用本地缓存...")
+                    # 尝试从本地缓存加载
+                    self.pipe = StableDiffusionPipeline.from_pretrained(
+                        self.model_path,
+                        torch_dtype=torch_dtype,
+                        safety_checker=None,
+                        requires_safety_checker=False,
+                        local_files_only=True  # 强制使用本地文件
+                    )
+                else:
+                    raise e
             
             # 移动到指定设备
             self.pipe = self.pipe.to(self.device)
             
             # 启用内存优化
             if self.device == "cuda":
-                self.pipe.enable_attention_slicing()
-                self.pipe.enable_model_cpu_offload()
+                # 对于高端GPU（16GB显存），禁用CPU卸载以获得最佳性能
+                try:
+                    import torch
+                    total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                    if total_memory >= 12:  # 12GB以上显存
+                        logger.info(f"检测到高端GPU ({total_memory:.1f}GB)，禁用CPU卸载以获得最佳性能")
+                        # 不启用CPU卸载，保持模型完全在GPU上
+                        self.pipe.enable_attention_slicing(1)  # 轻微的注意力切片
+                    else:
+                        logger.info(f"中低端GPU ({total_memory:.1f}GB)，启用CPU卸载节省显存")
+                        self.pipe.enable_attention_slicing()
+                        self.pipe.enable_model_cpu_offload()
+                except Exception as e:
+                    logger.warning(f"无法检测GPU显存，使用默认优化: {str(e)}")
+                    self.pipe.enable_attention_slicing()
+                    self.pipe.enable_model_cpu_offload()
             
             logger.info("模型加载成功")
             return True
             
         except Exception as e:
             logger.error(f"模型加载失败: {str(e)}")
+            # 提供详细的错误信息和解决建议
+            if "Connection error" in str(e) or "Max retries exceeded" in str(e):
+                logger.error("网络连接问题，请检查网络连接或使用本地模型")
+                logger.error("解决方案：")
+                logger.error("1. 检查网络连接")
+                logger.error("2. 使用模型下载脚本: python scripts/download_models.py")
+                logger.error("3. 配置本地模型路径")
+            elif "not cached locally" in str(e):
+                logger.error("模型未在本地缓存，且无法从网络下载")
+                logger.error("解决方案：")
+                logger.error("1. 运行模型下载脚本: python scripts/download_models.py")
+                logger.error("2. 手动下载模型到 models/stable-diffusion-v1-5 目录")
             return False
     
     def set_scheduler(self, scheduler_name: str):
@@ -170,14 +231,17 @@ class SDGenerator:
         
         # 处理种子
         if seed == -1:
+            import torch
             seed = torch.randint(0, 2**32 - 1, (1,)).item()
         
+        import torch
         generator = torch.Generator(device=self.device).manual_seed(seed)
         
         logger.info(f"开始生成图像 - 提示词: {prompt[:50]}..., 步数: {steps}, CFG: {cfg_scale}, 种子: {seed}")
         
         try:
             # 生成图像
+            import torch
             with torch.autocast(self.device if self.device != "mps" else "cpu"):
                 result = self.pipe(
                     prompt=prompt,
@@ -191,7 +255,7 @@ class SDGenerator:
                 )
             
             images = result.images
-            logger.info(f"成功生成 {len(images)} 张图像")
+            logger.info(f"成功生成 {len(images)} 张图像，使用设备: {self.device}")
             return images
             
         except Exception as e:

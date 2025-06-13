@@ -34,6 +34,12 @@ class GenerationRequest(BaseModel):
     technical_detail: float = Field(0.8, ge=0.0, le=1.0, description="技术细节程度")
     save_images: bool = Field(True, description="是否保存图像")
     generate_annotations: bool = Field(True, description="是否生成标注")
+    # YOLO检测参数
+    enable_yolo_detection: bool = Field(False, description="是否启用YOLO检测")
+    yolo_confidence: float = Field(0.5, ge=0.1, le=1.0, description="YOLO检测置信度阈值")
+    yolo_nms_threshold: float = Field(0.4, ge=0.1, le=1.0, description="YOLO NMS阈值")
+    yolo_save_original: bool = Field(True, description="是否保存原始图片")
+    yolo_save_annotated: bool = Field(True, description="是否保存标注图片")
 
 class PromptBuildRequest(BaseModel):
     """提示词构建请求"""
@@ -66,6 +72,18 @@ async def generate_images(
     try:
         logger.info(f"收到图像生成请求: {request.military_target}, {request.weather}, {request.scene}")
         
+        # 检查AI服务是否可用
+        if not ai_service.is_model_loaded:
+            logger.warning("AI模型未加载，尝试重新初始化...")
+            try:
+                await ai_service.initialize()
+            except Exception as e:
+                logger.error(f"AI模型初始化失败: {str(e)}")
+                raise HTTPException(
+                    status_code=503, 
+                    detail="AI生成服务暂时不可用，请检查模型配置或使用传统生成模式"
+                )
+        
         result = await ai_service.generate_images(
             military_target=request.military_target,
             weather=request.weather,
@@ -81,7 +99,13 @@ async def generate_images(
             style_strength=request.style_strength,
             technical_detail=request.technical_detail,
             save_images=request.save_images,
-            generate_annotations=request.generate_annotations
+            generate_annotations=request.generate_annotations,
+            # YOLO检测参数
+            enable_yolo_detection=request.enable_yolo_detection,
+            yolo_confidence=request.yolo_confidence,
+            yolo_nms_threshold=request.yolo_nms_threshold,
+            yolo_save_original=request.yolo_save_original,
+            yolo_save_annotated=request.yolo_save_annotated
         )
         
         return GenerationResponse(
@@ -282,11 +306,17 @@ async def initialize_service(
                 "message": "AI生成服务初始化成功"
             }
         else:
-            raise HTTPException(status_code=500, detail="AI生成服务初始化失败")
+            return {
+                "success": False,
+                "message": "AI生成服务初始化失败，请检查模型配置"
+            }
             
     except Exception as e:
         logger.error(f"AI生成服务初始化失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"AI生成服务初始化失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"AI生成服务初始化失败: {str(e)}"
+        }
 
 @router.get("/status")
 async def get_service_status(

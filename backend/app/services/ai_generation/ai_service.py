@@ -17,28 +17,61 @@ from .sd_generator import SDGenerator
 from .prompt_builder import PromptBuilder
 from ..common.annotation_generator import AnnotationGenerator
 from ..common.file_manager import FileManager
+try:
+    from ..common.yolo_detection import YOLODetectionService
+except ImportError:
+    # 如果真实YOLO服务不可用，使用模拟服务
+    from ..common.mock_yolo_detection import YOLODetectionService
+from ...core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 class AIGenerationService:
     """AI生成服务"""
     
-    def __init__(self, model_path: str = "runwayml/stable-diffusion-v1-5"):
+    def __init__(self, model_path: str = None):
         """
         初始化AI生成服务
         
         Args:
-            model_path: SD模型路径
+            model_path: SD模型路径，如果为None则使用配置文件中的路径
         """
-        self.sd_generator = SDGenerator(model_path)
+        settings = get_settings()
+        
+        # 使用配置文件中的模型路径
+        if model_path is None:
+            model_path = settings.get_ai_model_path()
+        
+        # 如果配置为使用本地模型，优先检查本地路径
+        if settings.ai_use_local_model:
+            # 尝试多个可能的路径
+            possible_paths = [
+                Path(settings.ai_local_models_dir) / "stable-diffusion-v1-5",
+                Path.cwd() / settings.ai_local_models_dir / "stable-diffusion-v1-5",
+                Path.cwd().parent / settings.ai_local_models_dir / "stable-diffusion-v1-5",  # 从backend目录向上一级
+                Path(__file__).parent.parent.parent.parent / settings.ai_local_models_dir / "stable-diffusion-v1-5"
+            ]
+            
+            for local_path in possible_paths:
+                if local_path.exists() and local_path.is_dir():
+                    model_path = str(local_path.resolve())
+                    logger.info(f"使用本地模型路径: {model_path}")
+                    break
+            else:
+                logger.warning(f"未找到本地模型，尝试的路径: {[str(p) for p in possible_paths]}")
+        
+        device = settings.get_ai_device()
+        
+        self.sd_generator = SDGenerator(model_path, device)
         self.prompt_builder = PromptBuilder()
         self.annotation_generator = AnnotationGenerator()
         self.file_manager = FileManager()
+        self.yolo_service = YOLODetectionService()
         
         self.is_model_loaded = False
         self.generation_history = []
         
-        logger.info("AI生成服务初始化完成")
+        logger.info(f"AI生成服务初始化完成，模型路径: {model_path}, 设备: {device}")
     
     async def initialize(self) -> bool:
         """
@@ -125,7 +158,13 @@ class AIGenerationService:
         style_strength: float = 0.7,
         technical_detail: float = 0.8,
         save_images: bool = True,
-        generate_annotations: bool = True
+        generate_annotations: bool = True,
+        # YOLO检测参数
+        enable_yolo_detection: bool = False,
+        yolo_confidence: float = 0.5,
+        yolo_nms_threshold: float = 0.4,
+        yolo_save_original: bool = True,
+        yolo_save_annotated: bool = True
     ) -> Dict[str, Any]:
         """
         生成图像
@@ -146,6 +185,11 @@ class AIGenerationService:
             technical_detail: 技术细节程度
             save_images: 是否保存图像
             generate_annotations: 是否生成标注
+            enable_yolo_detection: 是否启用YOLO检测
+            yolo_confidence: YOLO检测置信度阈值
+            yolo_nms_threshold: YOLO NMS阈值
+            yolo_save_original: 是否保存原始图片
+            yolo_save_annotated: 是否保存标注图片
             
         Returns:
             Dict[str, Any]: 生成结果
@@ -189,6 +233,7 @@ class AIGenerationService:
             result = {
                 "generation_id": generation_id,
                 "timestamp": timestamp.isoformat(),
+                "device_used": self.sd_generator.device if self.sd_generator else "unknown",
                 "parameters": {
                     "military_target": military_target,
                     "weather": weather,
@@ -209,10 +254,22 @@ class AIGenerationService:
                     "negative": negative_prompt
                 },
                 "images": [],
-                "annotations": []
+                "annotations": [],
+                "yolo_results": None
             }
             
             # 4. 保存图像和生成标注
+            yolo_results = None
+            if enable_yolo_detection:
+                # 初始化YOLO检测结果
+                yolo_results = {
+                    "total_detections": 0,
+                    "detection_summary": {},
+                    "annotated_images_saved": yolo_save_annotated,
+                    "original_images_saved": yolo_save_original,
+                    "images": []
+                }
+            
             if save_images or generate_annotations:
                 for i, image in enumerate(images):
                     image_info = await self._process_generated_image(
@@ -223,12 +280,32 @@ class AIGenerationService:
                         weather=weather,
                         scene=scene,
                         save_image=save_images,
-                        generate_annotation=generate_annotations
+                        generate_annotation=generate_annotations,
+                        # YOLO检测参数
+                        enable_yolo_detection=enable_yolo_detection,
+                        yolo_confidence=yolo_confidence,
+                        yolo_nms_threshold=yolo_nms_threshold,
+                        yolo_save_original=yolo_save_original,
+                        yolo_save_annotated=yolo_save_annotated
                     )
                     result["images"].append(image_info)
+                    
+                    # 收集YOLO检测结果
+                    if enable_yolo_detection and "yolo_detection" in image_info:
+                        yolo_detection = image_info["yolo_detection"]
+                        yolo_results["images"].append(yolo_detection)
+                        yolo_results["total_detections"] += yolo_detection.get("total_detections", 0)
+                        
+                        # 合并检测统计
+                        for target_type, count in yolo_detection.get("detection_summary", {}).items():
+                            yolo_results["detection_summary"][target_type] = yolo_results["detection_summary"].get(target_type, 0) + count
             else:
                 # 只返回图像对象
                 result["images"] = images
+            
+            # 添加YOLO检测结果到返回值
+            if enable_yolo_detection:
+                result["yolo_results"] = yolo_results
             
             # 5. 记录生成历史
             self.generation_history.append({
@@ -266,7 +343,13 @@ class AIGenerationService:
         weather: str,
         scene: str,
         save_image: bool = True,
-        generate_annotation: bool = True
+        generate_annotation: bool = True,
+        # YOLO检测参数
+        enable_yolo_detection: bool = False,
+        yolo_confidence: float = 0.5,
+        yolo_nms_threshold: float = 0.4,
+        yolo_save_original: bool = True,
+        yolo_save_annotated: bool = True
     ) -> Dict[str, Any]:
         """
         处理生成的图像
@@ -342,6 +425,28 @@ class AIGenerationService:
                 )
                 image_info["annotation_path"] = str(annotation_path)
         
+        # YOLO检测处理
+        if enable_yolo_detection and save_image and "file_path" in image_info:
+            try:
+                yolo_detection = await self._perform_yolo_detection(
+                    image_path=image_info["file_path"],
+                    generation_id=generation_id,
+                    image_index=image_index,
+                    confidence_threshold=yolo_confidence,
+                    nms_threshold=yolo_nms_threshold,
+                    save_original=yolo_save_original,
+                    save_annotated=yolo_save_annotated
+                )
+                image_info["yolo_detection"] = yolo_detection
+                logger.info(f"YOLO检测完成，检测到 {yolo_detection.get('total_detections', 0)} 个目标")
+            except Exception as e:
+                logger.error(f"YOLO检测失败: {str(e)}")
+                image_info["yolo_detection"] = {
+                    "error": str(e),
+                    "total_detections": 0,
+                    "detection_summary": {}
+                }
+        
         return image_info
     
     async def _generate_annotation_for_image(
@@ -405,6 +510,72 @@ class AIGenerationService:
         )
         
         return annotation
+    
+    async def _perform_yolo_detection(
+        self,
+        image_path: str,
+        generation_id: str,
+        image_index: int,
+        confidence_threshold: float = 0.5,
+        nms_threshold: float = 0.4,
+        save_original: bool = True,
+        save_annotated: bool = True
+    ) -> Dict[str, Any]:
+        """
+        执行YOLO检测
+        
+        Args:
+            image_path: 图像文件路径
+            generation_id: 生成ID
+            image_index: 图像索引
+            confidence_threshold: 置信度阈值
+            nms_threshold: NMS阈值
+            save_original: 是否保存原始图片
+            save_annotated: 是否保存标注图片
+            
+        Returns:
+            Dict[str, Any]: YOLO检测结果
+        """
+        try:
+            # 确保YOLO模型已加载
+            if not self.yolo_service.is_loaded:
+                logger.info("正在加载YOLO模型...")
+                success = self.yolo_service.load_model()
+                if not success:
+                    raise RuntimeError("YOLO模型加载失败")
+            
+            # 创建YOLO输出目录
+            yolo_output_dir = os.path.join(
+                os.path.dirname(image_path),
+                "yolo_detection"
+            )
+            os.makedirs(yolo_output_dir, exist_ok=True)
+            
+            # 在线程池中执行YOLO检测以避免阻塞
+            loop = asyncio.get_event_loop()
+            yolo_result = await loop.run_in_executor(
+                None,
+                self.yolo_service.process_image,
+                image_path,
+                confidence_threshold,
+                nms_threshold,
+                save_original,
+                save_annotated,
+                yolo_output_dir
+            )
+            
+            # 添加生成相关信息
+            yolo_result.update({
+                "generation_id": generation_id,
+                "image_index": image_index,
+                "yolo_model_info": self.yolo_service.get_model_info()
+            })
+            
+            return yolo_result
+            
+        except Exception as e:
+            logger.error(f"YOLO检测执行失败: {str(e)}")
+            raise
     
     def get_prompt_suggestions(self, military_target: str) -> Dict[str, List[str]]:
         """

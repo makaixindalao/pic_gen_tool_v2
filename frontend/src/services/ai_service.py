@@ -152,7 +152,12 @@ class AIServiceClient:
         style_strength: float = 0.7,
         technical_detail: float = 0.8,
         save_images: bool = True,
-        generate_annotations: bool = True
+        generate_annotations: bool = True,
+        enable_yolo_detection: bool = True,
+        yolo_confidence: float = 0.5,
+        yolo_nms_threshold: float = 0.4,
+        yolo_save_original: bool = True,
+        yolo_save_annotated: bool = True
     ) -> Dict[str, Any]:
         """
         生成图像
@@ -173,6 +178,11 @@ class AIServiceClient:
             technical_detail: 技术细节程度
             save_images: 是否保存图像
             generate_annotations: 是否生成标注
+            enable_yolo_detection: 是否启用YOLO检测
+            yolo_confidence: YOLO检测置信度阈值
+            yolo_nms_threshold: YOLO NMS阈值
+            yolo_save_original: 是否保存原始图片
+            yolo_save_annotated: 是否保存标注图片
             
         Returns:
             Dict[str, Any]: 生成结果
@@ -193,7 +203,12 @@ class AIServiceClient:
                 "style_strength": style_strength,
                 "technical_detail": technical_detail,
                 "save_images": save_images,
-                "generate_annotations": generate_annotations
+                "generate_annotations": generate_annotations,
+                "enable_yolo_detection": enable_yolo_detection,
+                "yolo_confidence": yolo_confidence,
+                "yolo_nms_threshold": yolo_nms_threshold,
+                "yolo_save_original": yolo_save_original,
+                "yolo_save_annotated": yolo_save_annotated
             }
             
             response = self._make_request('POST', '/generate', json=data)
